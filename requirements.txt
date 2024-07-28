@@ -1,0 +1,6 @@
+pika
+Flask
+flask-cors
+requests
+kafka-python-ng
+fluent-logger
