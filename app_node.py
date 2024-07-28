@@ -5,9 +5,20 @@ import requests
 import json
 import logging
 from kafka import KafkaProducer
+from fluent import sender, event
+from prometheus_client import start_http_server, Summary, Counter, Gauge
 
 # Set up standard logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Prometheus metrics
+REQUEST_TIME = Summary('request_processing_seconds', 'Time spent processing request')
+REQUEST_COUNTER = Counter('request_count', 'Total number of requests')
+ERROR_COUNTER = Counter('error_count', 'Total number of errors')
+REQUEST_IN_PROGRESS = Gauge('requests_in_progress', 'Number of requests in progress')
+
+# Start Prometheus HTTP server
+start_http_server(8000)
 
 # Check if Fluentd is available and set up Fluentd logger if it is
 use_fluentd = False
@@ -15,24 +26,29 @@ fluentd_host = os.getenv('FLUENTD_HOST', 'localhost')
 fluentd_port = int(os.getenv('FLUENTD_PORT', 24224))
 
 try:
-    from fluent import sender, event
     sender.setup('app_node', host=fluentd_host, port=fluentd_port)
     use_fluentd = True
     logging.info("Fluentd logging is enabled.")
 except ImportError:
     logging.warning("Fluentd logger not available. Falling back to standard logging.")
 
+
 def log_info(message):
     if use_fluentd:
         event.Event('info', {'message': message})
     logging.info(message)
+
 
 def log_error(message):
     if use_fluentd:
         event.Event('error', {'message': message})
     logging.error(message)
 
+
+@REQUEST_TIME.time()
+@REQUEST_IN_PROGRESS.track_inprogress()
 def on_request(ch, method, props, body):
+    REQUEST_COUNTER.inc()
     log_info("Received RPC request.")
 
     try:
@@ -41,6 +57,7 @@ def on_request(ch, method, props, body):
         log_info("Decoded request body and converted to dictionary.")
     except Exception as e:
         log_error(f"Failed to decode and convert request body: {e}")
+        ERROR_COUNTER.inc()
         return
 
     input_text = str(dictionary.get('prompt', ''))
@@ -59,6 +76,7 @@ def on_request(ch, method, props, body):
         log_info("Received response from external API.")
     except requests.RequestException as e:
         log_error(f"Error during external API request: {e}")
+        ERROR_COUNTER.inc()
         ch.basic_publish(
             exchange='',
             routing_key=props.reply_to,
@@ -79,6 +97,7 @@ def on_request(ch, method, props, body):
                 response_list.append(json.loads(obj))
             except json.JSONDecodeError as e:
                 log_error(f"Failed to decode JSON object: {e}")
+                ERROR_COUNTER.inc()
 
     # Extract and consolidate the responses into one sentence
     consolidated_response = ''.join([item.get('response', '') for item in response_list])
@@ -96,6 +115,7 @@ def on_request(ch, method, props, body):
         log_info(f"Sent message to Kafka: {message}")
     except Exception as e:
         log_error(f"Failed to send message to Kafka: {e}")
+        ERROR_COUNTER.inc()
 
     # Send response back to RPC client
     ch.basic_publish(
@@ -106,6 +126,7 @@ def on_request(ch, method, props, body):
     )
     ch.basic_ack(delivery_tag=method.delivery_tag)
     log_info("Sent response back to RPC client and acknowledged the message.")
+
 
 # Set up RabbitMQ connection and channel
 rabbitmq_ip = os.getenv('RABBITIP', 'localhost')
