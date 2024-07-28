@@ -1,5 +1,5 @@
 # app_node/Dockerfile
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # Set environment variable for RabbitMQ IP
 ENV RABBITIP=localhost

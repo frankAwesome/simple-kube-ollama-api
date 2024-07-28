@@ -1,5 +1,5 @@
 # app_rest/Dockerfile
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # Set environment variable for RabbitMQ IP
 ENV RABBITIP=localhost
@@ -11,6 +11,10 @@ RUN pip install --upgrade pip
 RUN pip install -U Flask
 RUN pip install -U flask-cors
 RUN pip install pika
+RUN pip install psutil
+RUN pip install prometheus_client
+RUN pip install fluent-logger
+RUN pip install redis
 
 # Copy the rest of the application
 COPY app_rest.py .

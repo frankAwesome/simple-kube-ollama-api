@@ -1,0 +1,5 @@
+docker build -t frankawesome/node-llm-1:latest -f app_node/Dockerfile . --platform linux/amd64
+docker push frankawesome/node-llm-1:latest
+
+docker build -t frankawesome/rest-llm-1:latest -f app_rest/Dockerfile . --platform linux/amd64
+docker push frankawesome/rest-llm-1:latest
