@@ -3,7 +3,7 @@ Flask
 flask-cors
 requests
 kafka-python-ng
-fluent-logger
 redis
 psutil
 prometheus_client
+python-logging-loki

@@ -5,10 +5,10 @@ from flask_cors import CORS
 import os
 import psutil
 from prometheus_client import start_http_server, Summary, Gauge, Counter, generate_latest
-from fluent import sender, event
 import logging
 import redis
 import json
+from logging_loki import LokiHandler
 
 app = Flask(__name__)
 CORS(app)  # This will enable CORS for all routes
@@ -19,30 +19,23 @@ CPU_USAGE = Gauge('cpu_usage', 'CPU usage')
 MEMORY_USAGE = Gauge('memory_usage', 'Memory usage')
 REQUEST_COUNTER = Counter('http_requests_total', 'Total number of HTTP requests')
 
-# Set up basic logging configuration
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Loki Configuration
+loki_host = os.getenv('LOKI_HOST', 'http://localhost:3100')
+loki_labels = {"job": "flask_app"}  # Add any other labels you want
+
+# Set up Loki logging
+loki_handler = LokiHandler(
+    url=f"{loki_host}/loki/api/v1/push",
+    tags=loki_labels,
+    version="1"
+)
+logging.basicConfig(level=logging.INFO, handlers=[loki_handler], format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Attempt to connect to Fluentd
-fluentd_host = os.getenv('FLUENTD_HOST', 'localhost')
-fluentd_port = int(os.getenv('FLUENTD_PORT', 24224))
-fluentd_tag = os.getenv('FLUENTD_TAG', 'flask_app')
-fluentd_enabled = True
-
-try:
-    fluent_sender = sender.FluentSender(fluentd_tag, host=fluentd_host, port=fluentd_port)
-    logger.info('Connected to Fluentd.')
-except Exception as e:
-    fluentd_enabled = False
-    logger.error(f'Failed to connect to Fluentd: {e}')
-
-
-def log_to_fluentd(tag, data):
-    if fluentd_enabled:
-        try:
-            event.Event(tag, data)
-        except Exception as e:
-            logger.error(f"Failed to send log to Fluentd: {e}")
+# Initialize Redis client
+redis_host = os.getenv('REDIS_HOST', 'localhost')
+redis_port = 6379
+redis_client = redis.StrictRedis(host=redis_host, port=redis_port, decode_responses=True)
 
 
 class RabbitMQClient:
@@ -86,17 +79,10 @@ class RabbitMQClient:
         return self.response.decode()
 
 
-# Initialize Redis client
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = 6379
-redis_client = redis.StrictRedis(host=redis_host, port=redis_port, decode_responses=True)
-
-
 @app.route('/prompt_llm', methods=['POST'])
 def prompt_llm():
     REQUEST_COUNTER.inc()  # Increment the request counter
     data = request.get_json()
-    log_to_fluentd('prompt_llm_request', {'data': data})
     logger.info(f'Received /prompt_llm request with data: {data}')
 
     # Check if response is in Redis cache
@@ -105,7 +91,6 @@ def prompt_llm():
 
     if cached_response:
         logger.info('Found response in cache.')
-        log_to_fluentd('prompt_llm_response', {'response': cached_response, 'cache': True})
         return jsonify({"response": cached_response})
 
     # If not in cache, call RabbitMQ
@@ -116,7 +101,6 @@ def prompt_llm():
     redis_client.set(cache_key, response, ex=3600)  # Cache for 1 hour
     logger.info('Cached new response.')
 
-    log_to_fluentd('prompt_llm_response', {'response': response, 'cache': False})
     logger.info(f'Sending /prompt_llm response: {response}')
     return jsonify({"response": response})
 
@@ -131,7 +115,6 @@ def metrics():
         'cpu_usage': cpu_usage,
         'memory_usage': memory_usage
     }
-    log_to_fluentd('metrics', metrics_data)
     logger.info(f'Returning /metrics data: {metrics_data}')
     return Response(generate_latest(), mimetype='text/plain')
 

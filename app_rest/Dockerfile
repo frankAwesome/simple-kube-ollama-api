@@ -13,7 +13,7 @@ RUN pip install -U flask-cors
 RUN pip install pika
 RUN pip install psutil
 RUN pip install prometheus_client
-RUN pip install fluent-logger
+RUN pip install python-logging-loki
 RUN pip install redis
 
 # Copy the rest of the application

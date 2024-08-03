@@ -5,11 +5,20 @@ import requests
 import json
 import logging
 from kafka import KafkaProducer
-from fluent import sender, event
 from prometheus_client import start_http_server, Summary, Counter, Gauge
+from logging_loki import LokiHandler
 
-# Set up standard logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Loki Configuration
+loki_host = os.getenv('LOKI_HOST', 'http://localhost:3100')
+loki_labels = {"job": "python-app"}  # Add any other labels you want
+
+# Set up Loki logging
+loki_handler = LokiHandler(
+    url=f"{loki_host}/loki/api/v1/push",
+    tags=loki_labels,
+    version="1"
+)
+logging.basicConfig(level=logging.INFO, handlers=[loki_handler], format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Prometheus metrics
 REQUEST_TIME = Summary('request_processing_seconds', 'Time spent processing request')
@@ -20,30 +29,11 @@ REQUEST_IN_PROGRESS = Gauge('requests_in_progress', 'Number of requests in progr
 # Start Prometheus HTTP server
 start_http_server(8000)
 
-# Check if Fluentd is available and set up Fluentd logger if it is
-use_fluentd = False
-fluentd_host = os.getenv('FLUENTD_HOST', 'localhost')
-fluentd_port = int(os.getenv('FLUENTD_PORT', 24224))
-
-try:
-    sender.setup('app_node', host=fluentd_host, port=fluentd_port)
-    use_fluentd = True
-    logging.info("Fluentd logging is enabled.")
-except ImportError:
-    logging.warning("Fluentd logger not available. Falling back to standard logging.")
-
-
 def log_info(message):
-    if use_fluentd:
-        event.Event('info', {'message': message})
     logging.info(message)
 
-
 def log_error(message):
-    if use_fluentd:
-        event.Event('error', {'message': message})
     logging.error(message)
-
 
 @REQUEST_TIME.time()
 @REQUEST_IN_PROGRESS.track_inprogress()
@@ -126,7 +116,6 @@ def on_request(ch, method, props, body):
     )
     ch.basic_ack(delivery_tag=method.delivery_tag)
     log_info("Sent response back to RPC client and acknowledged the message.")
-
 
 # Set up RabbitMQ connection and channel
 rabbitmq_ip = os.getenv('RABBITIP', 'localhost')
